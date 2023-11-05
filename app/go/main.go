@@ -1304,14 +1304,12 @@ type isuConditionQueueItem struct {
 func isuConditionQueueWorker() {
 	for {
 		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `score`, `is_dirty`, `is_overweight`, `is_broken`, `message`, `created_at`, `timestamp_h`", "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		first := true
 
 		ticker := time.NewTicker(time.Second)
 	LOOP:
-		for {
+		for count := 0; count < 1000; count++ {
 			var req isuConditionQueueItem
-			if first {
-				first = false
+			if count == 0 {
 				req = <-isuConditionQueue.Pop()
 			} else {
 				select {
