@@ -1295,8 +1295,10 @@ func isuConditionQueueWorker() {
 	for {
 		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `score`, `is_dirty`, `is_overweight`, `is_broken`, `message`, `created_at`, `timestamp_h`", "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		first := true
+
+		ticker := time.NewTicker(time.Second)
 	LOOP:
-		for i := 0; i < 1000; i++ {
+		for {
 			var req isuConditionQueueItem
 			if first {
 				first = false
@@ -1304,6 +1306,8 @@ func isuConditionQueueWorker() {
 			} else {
 				select {
 				case req = <-isuConditionQueue.Pop():
+				case <-ticker.C:
+					break LOOP
 				default:
 					break LOOP
 				}
