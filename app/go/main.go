@@ -252,7 +252,7 @@ func main() {
 	}
 	defer db.Close()
 
-	isuConditionQueueWorker()
+	go isuConditionQueueWorker()
 
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
 	if postIsuConditionTargetBaseURL == "" {
