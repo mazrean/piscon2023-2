@@ -1152,7 +1152,7 @@ func initCharacterIsuListCache() error {
 	return nil
 }
 
-var trendCache, err = isucache.New[int, []byte]("trend", func(ctx context.Context, key int) ([]byte, error) {
+var trendCache, _ = isucache.New[int, []byte]("trend", func(ctx context.Context, key int) ([]byte, error) {
 	characterIsuMap := map[string][]Isu{}
 	characterIsuListCache.Range(func(k string, v []Isu) bool {
 		characterIsuMap[k] = v
@@ -1209,7 +1209,7 @@ var trendCache, err = isucache.New[int, []byte]("trend", func(ctx context.Contex
 	}
 
 	return json.Marshal(res)
-}, time.Millisecond*10, time.Millisecond*50)
+}, 0, time.Millisecond*50)
 
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
@@ -1295,6 +1295,7 @@ func isuConditionQueueWorker() {
 				Message:    req.Message,
 				CreatedAt:  now,
 			})
+
 		}
 
 		go func() {
