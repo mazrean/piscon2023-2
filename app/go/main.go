@@ -1051,9 +1051,9 @@ func getIsuConditions(c echo.Context) error {
 
 func initConditionLevel() error {
 	var conditions []struct {
-		JIAIsuUUID string `db:"jia_isu_uuid"`
-		Timestamp  uint64 `db:"timestamp"`
-		Condition  string `db:"condition"`
+		JIAIsuUUID string    `db:"jia_isu_uuid"`
+		Timestamp  time.Time `db:"timestamp"`
+		Condition  string    `db:"condition"`
 	}
 	err := db.Select(&conditions, "SELECT `jia_isu_uuid`, `timestamp`, `condition` FROM `isu_condition` WHERE `condition_level` = 0")
 	if err != nil {
