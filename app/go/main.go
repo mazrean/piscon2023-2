@@ -1149,12 +1149,8 @@ func getTrend(c echo.Context) error {
 		characterWarningIsuConditions := []*TrendCondition{}
 		characterCriticalIsuConditions := []*TrendCondition{}
 		for _, isu := range isuList {
-			var isuLastCondition IsuCondition
-			err = db.Get(&isuLastCondition,
-				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
-				isu.JIAIsuUUID,
-			)
-			if errors.Is(err, sql.ErrNoRows) {
+			isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
+			if !ok {
 				continue
 			}
 			if err != nil {
