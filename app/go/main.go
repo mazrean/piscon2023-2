@@ -32,6 +32,7 @@ import (
 	isuquery "github.com/mazrean/isucon-go-tools/query"
 	isuqueue "github.com/mazrean/isucon-go-tools/queue"
 	"github.com/motoki317/sc"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -264,6 +265,12 @@ func main() {
 		return
 	}
 
+	err = initConditionLevel()
+	if err != nil {
+		e.Logger.Fatalf("failed to initConditionLevel: %v", err)
+		return
+	}
+
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
 	if postIsuConditionTargetBaseURL == "" {
 		e.Logger.Fatalf("missing: POST_ISUCONDITION_TARGET_BASE_URL")
@@ -360,6 +367,12 @@ func postInitialize(c echo.Context) error {
 	err = initCharacterIsuListCache()
 	if err != nil {
 		c.Logger().Errorf("failed to initCharacterIsuListCache: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	err = initConditionLevel()
+	if err != nil {
+		c.Logger().Errorf("failed to initConditionLevel: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
@@ -1036,6 +1049,40 @@ func getIsuConditions(c echo.Context) error {
 	return c.JSON(http.StatusOK, conditionsResponse)
 }
 
+func initConditionLevel() error {
+	var conditions []struct {
+		JIAIsuUUID string `db:"jia_isu_uuid"`
+		Timestamp  uint64 `db:"timestamp"`
+		Condition  string `db:"condition"`
+	}
+	err := db.Select(&conditions, "SELECT * FROM `isu_condition` WHERE `condition_level` = 0")
+	if err != nil {
+		return err
+	}
+
+	eg := errgroup.Group{}
+	for _, c := range conditions {
+		c := c
+		eg.Go(func() error {
+			conditionLevel := strings.Count(c.Condition, "=true")
+			_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
+				conditionLevel, c.JIAIsuUUID, c.Timestamp)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+	}
+
+	err = eg.Wait()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // ISUのコンディションをDBから取得
 func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, conditionLevel map[string]interface{}, startTime time.Time,
 	limit int, isuName string) ([]*GetIsuConditionResponse, error) {
@@ -1043,22 +1090,45 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 	conditions := []IsuCondition{}
 	var err error
 
+	var conditionLevels []uint8
+	for level := range conditionLevel {
+		switch level {
+		case conditionLevelInfo:
+			conditionLevels = append(conditionLevels, 0)
+		case conditionLevelWarning:
+			conditionLevels = append(conditionLevels, 1, 2)
+		case conditionLevelCritical:
+			conditionLevels = append(conditionLevels, 3)
+		}
+	}
+
+	var (
+		query string
+		args  []interface{}
+	)
 	if startTime.IsZero() {
-		err = db.Select(&conditions,
+		query, args, err = sqlx.In(
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime,
+				"	AND `condition_level` IN (?)"+
+				"	ORDER BY `timestamp` DESC LIMIT ?",
+			jiaIsuUUID, endTime, conditionLevels, limit,
 		)
 	} else {
-		err = db.Select(&conditions,
+		query, args, err = sqlx.In(
 			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
 				"	AND `timestamp` < ?"+
 				"	AND ? <= `timestamp`"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime, startTime,
+				"	AND `condition_level` IN (?)"+
+				"	ORDER BY `timestamp` DESC LIMIT ?",
+			jiaIsuUUID, endTime, startTime, conditionLevels, limit,
 		)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("db error: %v", err)
+	}
+
+	err = db.Select(&conditions, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
@@ -1082,10 +1152,6 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 			}
 			conditionsResponse = append(conditionsResponse, &data)
 		}
-	}
-
-	if len(conditionsResponse) > limit {
-		conditionsResponse = conditionsResponse[:limit]
 	}
 
 	return conditionsResponse, nil
@@ -1237,7 +1303,7 @@ type isuConditionQueueItem struct {
 
 func isuConditionQueueWorker() {
 	for {
-		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`, `created_at`", "(?, ?, ?, ?, ?, ?)")
+		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level, `message`, `created_at`", "(?, ?, ?, ?, ?, ?, ?)")
 		first := true
 	LOOP:
 		for i := 0; i < 1000; i++ {
@@ -1252,8 +1318,10 @@ func isuConditionQueueWorker() {
 					break LOOP
 				}
 			}
+
+			conditionLevel := strings.Count(req.Condition, "=true")
 			now := time.Now()
-			bi.Add(req.JIAIsuUUID, time.Unix(req.Timestamp, 0), req.IsSitting, req.Condition, req.Message, now)
+			bi.Add(req.JIAIsuUUID, time.Unix(req.Timestamp, 0), req.IsSitting, req.Condition, conditionLevel, req.Message, now)
 			latestIsuConditionCache.Store(req.JIAIsuUUID, &IsuCondition{
 				JIAIsuUUID: req.JIAIsuUUID,
 				Timestamp:  time.Unix(req.Timestamp, 0),
