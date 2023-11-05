@@ -1305,6 +1305,9 @@ func isuConditionQueueWorker() {
 			badConditionsCount := 0
 			for _, condStr := range strings.Split(req.Condition, ",") {
 				keyValue := strings.Split(condStr, "=")
+				if len(keyValue) != 2 {
+					continue
+				}
 
 				conditionName := keyValue[0]
 				if keyValue[1] == "true" {
