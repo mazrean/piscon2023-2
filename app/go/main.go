@@ -1074,49 +1074,46 @@ func initConditionLevel() error {
 // ISUのコンディションをDBから取得
 func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, conditionLevel map[string]interface{}, startTime time.Time,
 	limit int, isuName string) ([]*GetIsuConditionResponse, error) {
-	var conditionLevels []uint8
+	conditionLevelList := make([]int, 0, 4)
 	for level := range conditionLevel {
 		switch level {
 		case conditionLevelInfo:
-			conditionLevels = append(conditionLevels, 0)
+			conditionLevelList = append(conditionLevelList, 0)
 		case conditionLevelWarning:
-			conditionLevels = append(conditionLevels, 1, 2)
+			conditionLevelList = append(conditionLevelList, 1, 2)
 		case conditionLevelCritical:
-			conditionLevels = append(conditionLevels, 3)
+			conditionLevelList = append(conditionLevelList, 3)
 		}
 	}
 
-	var (
-		query string
-		args  []interface{}
-		err   error
-	)
-	if startTime.IsZero() {
-		query, args, err = sqlx.In(
-			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
-				"	AND `timestamp` < ?"+
-				"	AND `condition_level` IN (?)"+
-				"	ORDER BY `timestamp` DESC LIMIT ?",
-			jiaIsuUUID, endTime, conditionLevels, limit,
-		)
-	} else {
-		query, args, err = sqlx.In(
-			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
-				"	AND `timestamp` < ?"+
-				"	AND ? <= `timestamp`"+
-				"	AND `condition_level` IN (?)"+
-				"	ORDER BY `timestamp` DESC LIMIT ?",
-			jiaIsuUUID, endTime, startTime, conditionLevels, limit,
-		)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("db error: %v", err)
-	}
-
 	conditions := []IsuCondition{}
-	err = db.Select(&conditions, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("db error: %v", err)
+	if startTime.IsZero() {
+		query, args, err := sqlx.In("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
+			"	AND `timestamp` < ? AND `condition_level` IN (?)"+
+			"	ORDER BY `timestamp` DESC LIMIT ?",
+			jiaIsuUUID, endTime, conditionLevelList, limit)
+		if err != nil {
+			return nil, fmt.Errorf("db error: %v", err)
+		}
+
+		err = db.Select(&conditions, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("db error: %v", err)
+		}
+	} else {
+		query, args, err := sqlx.In("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
+			"	AND `timestamp` < ?"+
+			"	AND ? <= `timestamp`"+
+			"	ORDER BY `timestamp` DESC LIMIT ?",
+			jiaIsuUUID, endTime, startTime, limit)
+		if err != nil {
+			return nil, fmt.Errorf("db error: %v", err)
+		}
+
+		err = db.Select(&conditions, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("db error: %v", err)
+		}
 	}
 
 	conditionsResponse := []*GetIsuConditionResponse{}
