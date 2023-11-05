@@ -1213,7 +1213,7 @@ func initCharacterIsuListCache() error {
 }
 
 func trendWorker() {
-	ticker := time.NewTicker(time.Millisecond * 20)
+	ticker := time.NewTicker(time.Millisecond * 5)
 	err := os.MkdirAll(frontendContentsPath+"/api", 0755)
 	if err != nil {
 		log.Errorf("failed to create directory: %v", err)
