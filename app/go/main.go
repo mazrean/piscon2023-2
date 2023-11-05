@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/go-sql-driver/mysql"
+	"github.com/goccy/go-json"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
@@ -32,6 +32,7 @@ import (
 	isuquery "github.com/mazrean/isucon-go-tools/query"
 	isuqueue "github.com/mazrean/isucon-go-tools/queue"
 	"github.com/motoki317/sc"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -1210,78 +1211,87 @@ func initCharacterIsuListCache() error {
 	return nil
 }
 
+var sf = singleflight.Group{}
+
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	c.Response().Header().Set("Cache-Control", "max-age=1, public")
+	c.Response().Header().Set("Cache-Control", "max-age=0, public")
 
-	characterList := []Isu{}
-	err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
+	res, err, _ := sf.Do("getTrend", func() (interface{}, error) {
+		characterList := []Isu{}
+		err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+			return nil, fmt.Errorf("db error: %v", err)
+		}
+
+		res := []TrendResponse{}
+
+		for _, character := range characterList {
+			isuList, ok := characterIsuListCache.Load(character.Character)
+			if !ok {
+				c.Logger().Errorf("db error: %v", err)
+				return nil, fmt.Errorf("db error: %v", err)
+			}
+
+			characterInfoIsuConditions := []*TrendCondition{}
+			characterWarningIsuConditions := []*TrendCondition{}
+			characterCriticalIsuConditions := []*TrendCondition{}
+			for _, isu := range isuList {
+				isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
+				if !ok {
+					continue
+				}
+				if err != nil {
+					c.Logger().Errorf("db error: %v", err)
+					return nil, fmt.Errorf("db error: %v", err)
+				}
+
+				conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
+				if err != nil {
+					c.Logger().Error(err)
+					return nil, fmt.Errorf("db error: %v", err)
+				}
+				trendCondition := TrendCondition{
+					ID:        isu.ID,
+					Timestamp: isuLastCondition.Timestamp.Unix(),
+				}
+				switch conditionLevel {
+				case "info":
+					characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
+				case "warning":
+					characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
+				case "critical":
+					characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
+				}
+			}
+
+			sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
+				return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
+			})
+			sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
+				return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
+			})
+			sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
+				return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
+			})
+			res = append(res,
+				TrendResponse{
+					Character: character.Character,
+					Info:      characterInfoIsuConditions,
+					Warning:   characterWarningIsuConditions,
+					Critical:  characterCriticalIsuConditions,
+				})
+		}
+
+		return json.Marshal(res)
+	})
 	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	res := []TrendResponse{}
-
-	for _, character := range characterList {
-		isuList, ok := characterIsuListCache.Load(character.Character)
-		if !ok {
-			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
-
-		characterInfoIsuConditions := []*TrendCondition{}
-		characterWarningIsuConditions := []*TrendCondition{}
-		characterCriticalIsuConditions := []*TrendCondition{}
-		for _, isu := range isuList {
-			isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
-			if !ok {
-				continue
-			}
-			if err != nil {
-				c.Logger().Errorf("db error: %v", err)
-				return c.NoContent(http.StatusInternalServerError)
-			}
-
-			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
-			if err != nil {
-				c.Logger().Error(err)
-				return c.NoContent(http.StatusInternalServerError)
-			}
-			trendCondition := TrendCondition{
-				ID:        isu.ID,
-				Timestamp: isuLastCondition.Timestamp.Unix(),
-			}
-			switch conditionLevel {
-			case "info":
-				characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
-			case "warning":
-				characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
-			case "critical":
-				characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
-			}
-		}
-
-		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
-			return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
-		})
-		sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
-			return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
-		})
-		sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
-			return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
-		})
-		res = append(res,
-			TrendResponse{
-				Character: character.Character,
-				Info:      characterInfoIsuConditions,
-				Warning:   characterWarningIsuConditions,
-				Critical:  characterCriticalIsuConditions,
-			})
-	}
-
-	return c.JSON(http.StatusOK, res)
+	return c.Blob(http.StatusOK, "application/json", res.([]byte))
 }
 
 var isuConditionQueue = isuqueue.NewChannel[isuConditionQueueItem]("isu_condition_queue", 100000)
