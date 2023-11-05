@@ -1240,6 +1240,7 @@ func postIsuCondition(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
 
+		cond := cond
 		isuConditionQueue.Push() <- isuConditionQueueItem{
 			JIAIsuUUID:              jiaIsuUUID,
 			PostIsuConditionRequest: &cond,
