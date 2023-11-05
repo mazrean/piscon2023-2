@@ -1213,7 +1213,7 @@ func initCharacterIsuListCache() error {
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	c.Response().Header().Set("Cache-Control", "max-age=0.1, public")
+	c.Response().Header().Set("Cache-Control", "max-age=0, public")
 
 	characterList := []Isu{}
 	err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
