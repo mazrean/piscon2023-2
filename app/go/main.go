@@ -252,6 +252,11 @@ func main() {
 	defer db.Close()
 
 	go isuConditionQueueWorker()
+	err = initLatestIsuConditionCache()
+	if err != nil {
+		e.Logger.Fatalf("failed to initLatestIsuConditionCache: %v", err)
+		return
+	}
 
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
 	if postIsuConditionTargetBaseURL == "" {
@@ -337,6 +342,12 @@ func postInitialize(c echo.Context) error {
 	)
 	if err != nil {
 		c.Logger().Errorf("db error : %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	err = initLatestIsuConditionCache()
+	if err != nil {
+		c.Logger().Errorf("failed to initLatestIsuConditionCache: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
@@ -1083,6 +1094,34 @@ func calculateConditionLevel(condition string) (string, error) {
 	return conditionLevel, nil
 }
 
+var latestIsuConditionCache = isucache.NewAtomicMap[string, *IsuCondition]("latest_isu_condition")
+
+func initLatestIsuConditionCache() error {
+	var isuList []Isu
+	err := db.Select(&isuList, "SELECT * FROM `isu`")
+	if err != nil {
+		return err
+	}
+
+	for _, isu := range isuList {
+		var isuCondition IsuCondition
+		err = db.Get(&isuCondition,
+			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` DESC LIMIT 1",
+			isu.JIAIsuUUID,
+		)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return err
+		}
+
+		latestIsuConditionCache.Store(isu.JIAIsuUUID, &isuCondition)
+	}
+
+	return nil
+}
+
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
@@ -1110,37 +1149,36 @@ func getTrend(c echo.Context) error {
 		characterWarningIsuConditions := []*TrendCondition{}
 		characterCriticalIsuConditions := []*TrendCondition{}
 		for _, isu := range isuList {
-			conditions := []IsuCondition{}
-			err = db.Select(&conditions,
-				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC",
+			var isuLastCondition IsuCondition
+			err = db.Get(&isuLastCondition,
+				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
 				isu.JIAIsuUUID,
 			)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
 			if err != nil {
 				c.Logger().Errorf("db error: %v", err)
 				return c.NoContent(http.StatusInternalServerError)
 			}
 
-			if len(conditions) > 0 {
-				isuLastCondition := conditions[0]
-				conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
-				if err != nil {
-					c.Logger().Error(err)
-					return c.NoContent(http.StatusInternalServerError)
-				}
-				trendCondition := TrendCondition{
-					ID:        isu.ID,
-					Timestamp: isuLastCondition.Timestamp.Unix(),
-				}
-				switch conditionLevel {
-				case "info":
-					characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
-				case "warning":
-					characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
-				case "critical":
-					characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
-				}
+			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
+			if err != nil {
+				c.Logger().Error(err)
+				return c.NoContent(http.StatusInternalServerError)
 			}
-
+			trendCondition := TrendCondition{
+				ID:        isu.ID,
+				Timestamp: isuLastCondition.Timestamp.Unix(),
+			}
+			switch conditionLevel {
+			case "info":
+				characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
+			case "warning":
+				characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
+			case "critical":
+				characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
+			}
 		}
 
 		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
@@ -1173,7 +1211,7 @@ type isuConditionQueueItem struct {
 
 func isuConditionQueueWorker() {
 	for {
-		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`", "(?, ?, ?, ?, ?)")
+		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`, `created_at`", "(?, ?, ?, ?, ?, ?)")
 		first := true
 	LOOP:
 		for i := 0; i < 1000; i++ {
@@ -1188,7 +1226,16 @@ func isuConditionQueueWorker() {
 					break LOOP
 				}
 			}
-			bi.Add(req.JIAIsuUUID, time.Unix(req.Timestamp, 0), req.IsSitting, req.Condition, req.Message)
+			now := time.Now()
+			bi.Add(req.JIAIsuUUID, time.Unix(req.Timestamp, 0), req.IsSitting, req.Condition, req.Message, now)
+			latestIsuConditionCache.Store(req.JIAIsuUUID, &IsuCondition{
+				JIAIsuUUID: req.JIAIsuUUID,
+				Timestamp:  time.Unix(req.Timestamp, 0),
+				IsSitting:  req.IsSitting,
+				Condition:  req.Condition,
+				Message:    req.Message,
+				CreatedAt:  now,
+			})
 		}
 
 		go func() {
