@@ -1033,6 +1033,9 @@ func initConditionLevel() error {
 		badConditionsCount := 0
 		for _, condStr := range strings.Split(c.Condition, ",") {
 			keyValue := strings.Split(condStr, "=")
+			if len(keyValue) != 2 {
+				continue
+			}
 
 			conditionName := keyValue[0]
 			if keyValue[1] == "true" {
@@ -1059,8 +1062,8 @@ func initConditionLevel() error {
 			rawScore = scoreConditionLevelInfo
 		}
 
-		_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ?, `score` = ?, `is_dirty` = ?, `is_broken` = ?, `is_overweight` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
-			conditionLevel, rawScore, isDirty, isBroken, isOverweight, c.JIAIsuUUID, c.Timestamp)
+		_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ?, `score` = ?, `is_dirty` = ?, `is_broken` = ?, `is_overweight` = ?, `timestamp_h` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
+			conditionLevel, rawScore, isDirty, isBroken, isOverweight, c.Timestamp.Truncate(time.Hour), c.JIAIsuUUID, c.Timestamp)
 		if err != nil {
 			return err
 		}
@@ -1284,7 +1287,7 @@ type isuConditionQueueItem struct {
 
 func isuConditionQueueWorker() {
 	for {
-		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `score`, `is_dirty`, `is_overweight`, `is_broken`, `message`, `created_at`", "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `score`, `is_dirty`, `is_overweight`, `is_broken`, `message`, `created_at`, `timestamp_h`", "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		first := true
 	LOOP:
 		for i := 0; i < 1000; i++ {
@@ -1334,7 +1337,8 @@ func isuConditionQueueWorker() {
 			}
 
 			now := time.Now()
-			bi.Add(req.JIAIsuUUID, time.Unix(req.Timestamp, 0), req.IsSitting, req.Condition, conditionLevel, rawScore, isDirty, isOverweight, isBroken, req.Message, now)
+			timestamp := time.Unix(req.Timestamp, 0)
+			bi.Add(req.JIAIsuUUID, timestamp, req.IsSitting, req.Condition, conditionLevel, rawScore, isDirty, isOverweight, isBroken, req.Message, now, timestamp.Truncate(time.Hour))
 			latestIsuConditionCache.Store(req.JIAIsuUUID, &IsuCondition{
 				JIAIsuUUID: req.JIAIsuUUID,
 				Timestamp:  time.Unix(req.Timestamp, 0),
