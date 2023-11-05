@@ -1209,7 +1209,7 @@ var trendCache, _ = isucache.New[int, []byte]("trend", func(ctx context.Context,
 	}
 
 	return json.Marshal(res)
-}, 0, time.Millisecond*10)
+}, 0, time.Millisecond*25)
 
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
