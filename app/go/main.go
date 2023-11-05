@@ -1216,25 +1216,16 @@ var sf = singleflight.Group{}
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	c.Response().Header().Set("Cache-Control", "max-age=1, public")
-
 	res, err, _ := sf.Do("getTrend", func() (interface{}, error) {
-		characterList := []Isu{}
-		err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
-		if err != nil {
-			c.Logger().Errorf("db error: %v", err)
-			return nil, fmt.Errorf("db error: %v", err)
-		}
+		characterIsuMap := map[string][]Isu{}
+		characterIsuListCache.Range(func(k string, v []Isu) bool {
+			characterIsuMap[k] = v
+			return true
+		})
 
 		res := []TrendResponse{}
 
-		for _, character := range characterList {
-			isuList, ok := characterIsuListCache.Load(character.Character)
-			if !ok {
-				c.Logger().Errorf("db error: %v", err)
-				return nil, fmt.Errorf("db error: %v", err)
-			}
-
+		for character, isuList := range characterIsuMap {
 			characterInfoIsuConditions := []*TrendCondition{}
 			characterWarningIsuConditions := []*TrendCondition{}
 			characterCriticalIsuConditions := []*TrendCondition{}
@@ -1242,10 +1233,6 @@ func getTrend(c echo.Context) error {
 				isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
 				if !ok {
 					continue
-				}
-				if err != nil {
-					c.Logger().Errorf("db error: %v", err)
-					return nil, fmt.Errorf("db error: %v", err)
 				}
 
 				conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
@@ -1278,7 +1265,7 @@ func getTrend(c echo.Context) error {
 			})
 			res = append(res,
 				TrendResponse{
-					Character: character.Character,
+					Character: character,
 					Info:      characterInfoIsuConditions,
 					Warning:   characterWarningIsuConditions,
 					Critical:  characterCriticalIsuConditions,
