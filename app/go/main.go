@@ -1277,7 +1277,7 @@ func trendWorker() {
 					})
 			}
 
-			f, err := os.Create(frontendContentsPath + "/api/trend")
+			f, err := os.Create(frontendContentsPath + "/api/trend.json")
 			if err != nil {
 				log.Errorf("failed to open file: %v", err)
 				return
