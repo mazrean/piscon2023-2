@@ -1059,7 +1059,7 @@ func initConditionLevel() error {
 			rawScore = scoreConditionLevelInfo
 		}
 
-		_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ?, `score` = ?, `is_dirty` = ?, `is_broken` = ?, `is_overweight` = ?, `timestamp_h` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
+		_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ?, `score` = ?, `is_dirty` = ?, `is_broken` = ?, `is_overweight` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
 			conditionLevel, rawScore, isDirty, isBroken, isOverweight, c.JIAIsuUUID, c.Timestamp)
 		if err != nil {
 			return err
