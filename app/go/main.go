@@ -1214,6 +1214,12 @@ func initCharacterIsuListCache() error {
 
 func trendWorker() {
 	ticker := time.NewTicker(time.Millisecond * 100)
+	err := os.MkdirAll(frontendContentsPath+"/api", 0755)
+	if err != nil {
+		log.Errorf("failed to create directory: %v", err)
+		return
+	}
+
 	for range ticker.C {
 		func() {
 			characterIsuMap := map[string][]Isu{}
