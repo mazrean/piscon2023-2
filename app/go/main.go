@@ -1216,69 +1216,62 @@ var sf = singleflight.Group{}
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	res, err, _ := sf.Do("getTrend", func() (interface{}, error) {
-		characterIsuMap := map[string][]Isu{}
-		characterIsuListCache.Range(func(k string, v []Isu) bool {
-			characterIsuMap[k] = v
-			return true
-		})
+	characterIsuMap := map[string][]Isu{}
+	characterIsuListCache.Range(func(k string, v []Isu) bool {
+		characterIsuMap[k] = v
+		return true
+	})
 
-		res := []TrendResponse{}
+	res := []TrendResponse{}
 
-		for character, isuList := range characterIsuMap {
-			characterInfoIsuConditions := []*TrendCondition{}
-			characterWarningIsuConditions := []*TrendCondition{}
-			characterCriticalIsuConditions := []*TrendCondition{}
-			for _, isu := range isuList {
-				isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
-				if !ok {
-					continue
-				}
-
-				conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
-				if err != nil {
-					c.Logger().Error(err)
-					return nil, fmt.Errorf("db error: %v", err)
-				}
-				trendCondition := TrendCondition{
-					ID:        isu.ID,
-					Timestamp: isuLastCondition.Timestamp.Unix(),
-				}
-				switch conditionLevel {
-				case "info":
-					characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
-				case "warning":
-					characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
-				case "critical":
-					characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
-				}
+	for character, isuList := range characterIsuMap {
+		characterInfoIsuConditions := []*TrendCondition{}
+		characterWarningIsuConditions := []*TrendCondition{}
+		characterCriticalIsuConditions := []*TrendCondition{}
+		for _, isu := range isuList {
+			isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
+			if !ok {
+				continue
 			}
 
-			sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
-				return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
-			})
-			sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
-				return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
-			})
-			sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
-				return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
-			})
-			res = append(res,
-				TrendResponse{
-					Character: character,
-					Info:      characterInfoIsuConditions,
-					Warning:   characterWarningIsuConditions,
-					Critical:  characterCriticalIsuConditions,
-				})
+			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
+			if err != nil {
+				c.Logger().Error(err)
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			trendCondition := TrendCondition{
+				ID:        isu.ID,
+				Timestamp: isuLastCondition.Timestamp.Unix(),
+			}
+			switch conditionLevel {
+			case "info":
+				characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
+			case "warning":
+				characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
+			case "critical":
+				characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
+			}
 		}
 
-		return json.Marshal(res)
-	})
-	if err != nil {
-		return c.NoContent(http.StatusInternalServerError)
+		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
+			return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
+		})
+		sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
+			return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
+		})
+		sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
+			return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
+		})
+		res = append(res,
+			TrendResponse{
+				Character: character,
+				Info:      characterInfoIsuConditions,
+				Warning:   characterWarningIsuConditions,
+				Critical:  characterCriticalIsuConditions,
+			})
 	}
 
-	return c.Blob(http.StatusOK, "application/json", res.([]byte))
+	return c.JSON(http.StatusOK, res)
 }
 
 var isuConditionQueue = isuqueue.NewChannel[isuConditionQueueItem]("isu_condition_queue", 100000)
@@ -1355,13 +1348,11 @@ func isuConditionQueueWorker() {
 			})
 		}
 
-		go func() {
-			query, args := bi.Query()
-			_, err := db.Exec(query, args...)
-			if err != nil {
-				log.Print(err)
-			}
-		}()
+		query, args := bi.Query()
+		_, err := db.Exec(query, args...)
+		if err != nil {
+			log.Print(err)
+		}
 	}
 }
 
