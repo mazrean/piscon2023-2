@@ -1173,7 +1173,7 @@ var trendCache, err = isucache.New[int, []byte]("trend", func(ctx context.Contex
 
 			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
 			if err != nil {
-				c.Logger().Error(err)
+				log.Error(err)
 				return nil, fmt.Errorf("db error: %v", err)
 			}
 			trendCondition := TrendCondition{
@@ -1220,7 +1220,7 @@ func getTrend(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return c.Blob(http.StatusOK, "application/json", res.([]byte))
+	return c.Blob(http.StatusOK, "application/json", res)
 }
 
 var isuConditionQueue = isuqueue.NewChannel[isuConditionQueueItem]("isu_condition_queue", 100000)
