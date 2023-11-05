@@ -939,11 +939,7 @@ func getIsuConditions(c echo.Context) error {
 		startTime = time.Unix(startTimeInt64, 0)
 	}
 
-	var isuName string
-	err = db.Get(&isuName,
-		"SELECT name FROM `isu` WHERE `jia_isu_uuid` = ? AND `jia_user_id` = ?",
-		jiaIsuUUID, jiaUserID,
-	)
+	isuCache, err := isuCache.Get(c.Request().Context(), jiaIsuUUID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.String(http.StatusNotFound, "not found: isu")
@@ -952,6 +948,10 @@ func getIsuConditions(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+	if isuCache.JIAUserID != jiaUserID {
+		return c.String(http.StatusNotFound, "not found: isu")
+	}
+	isuName := isuCache.Name
 
 	conditionsResponse, err := getIsuConditionsFromDB(db, jiaIsuUUID, endTime, conditionLevel, startTime, conditionLimit, isuName)
 	if err != nil {
@@ -1209,7 +1209,7 @@ var trendCache, _ = isucache.New[int, []byte]("trend", func(ctx context.Context,
 	}
 
 	return json.Marshal(res)
-}, 0, time.Millisecond*50)
+}, 0, time.Millisecond*10)
 
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
