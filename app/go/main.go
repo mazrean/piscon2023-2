@@ -823,106 +823,71 @@ func getIsuGraph(c echo.Context) error {
 }
 
 // グラフのデータ点を一日分生成
-func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Time) ([]GraphResponse, error) {
-	dataPoints := []GraphDataPointWithInfo{}
-	conditionsInThisHour := []IsuCondition{}
-	timestampsInThisHour := []int64{}
-	var startTimeInThisHour time.Time
-	var condition IsuCondition
-
-	rows, err := tx.Queryx("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` ASC", jiaIsuUUID)
-	if err != nil {
-		return nil, fmt.Errorf("db error: %v", err)
+func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Time) ([24]GraphResponse, error) {
+	var conditions []struct {
+		JIAIsuUUID   string    `db:"jia_isu_uuid"`
+		StartAt      time.Time `db:"timestamp_h"`
+		Score        float64   `db:"score_percent"`
+		IsSitting    float64   `db:"is_sitting_percent"`
+		IsDirty      float64   `db:"is_dirty_percent"`
+		IsBroken     float64   `db:"is_broken_percent"`
+		IsOverweight float64   `db:"is_overweight_percent"`
 	}
-
-	for rows.Next() {
-		err = rows.StructScan(&condition)
-		if err != nil {
-			return nil, err
-		}
-
-		truncatedConditionTime := condition.Timestamp.Truncate(time.Hour)
-		if truncatedConditionTime != startTimeInThisHour {
-			if len(conditionsInThisHour) > 0 {
-				data, err := calculateGraphDataPoint(conditionsInThisHour)
-				if err != nil {
-					return nil, err
-				}
-
-				dataPoints = append(dataPoints,
-					GraphDataPointWithInfo{
-						JIAIsuUUID:          jiaIsuUUID,
-						StartAt:             startTimeInThisHour,
-						Data:                data,
-						ConditionTimestamps: timestampsInThisHour})
-			}
-
-			startTimeInThisHour = truncatedConditionTime
-			conditionsInThisHour = []IsuCondition{}
-			timestampsInThisHour = []int64{}
-		}
-		conditionsInThisHour = append(conditionsInThisHour, condition)
-		timestampsInThisHour = append(timestampsInThisHour, condition.Timestamp.Unix())
-	}
-
-	if len(conditionsInThisHour) > 0 {
-		data, err := calculateGraphDataPoint(conditionsInThisHour)
-		if err != nil {
-			return nil, err
-		}
-
-		dataPoints = append(dataPoints,
-			GraphDataPointWithInfo{
-				JIAIsuUUID:          jiaIsuUUID,
-				StartAt:             startTimeInThisHour,
-				Data:                data,
-				ConditionTimestamps: timestampsInThisHour})
-	}
-
 	endTime := graphDate.Add(time.Hour * 24)
-	startIndex := len(dataPoints)
-	endNextIndex := len(dataPoints)
-	for i, graph := range dataPoints {
-		if startIndex == len(dataPoints) && !graph.StartAt.Before(graphDate) {
-			startIndex = i
-		}
-		if endNextIndex == len(dataPoints) && graph.StartAt.After(endTime) {
-			endNextIndex = i
-		}
+	err := tx.Select(&conditions, "SELECT `jia_isu_uuid`, `timestamp_h`, SUM(`score`)*100/3/COUNT(*) AS `score_percent`, SUM(`is_sitting`)*100/COUNT(*) AS `is_sitting_percent`, SUM(`is_dirty`)*100/COUNT(*) AS `is_dirty_percent`, SUM(`is_broken`)*100/COUNT(*) AS `is_broken_percent`, SUM(`is_overweight`)*100/COUNT(*) AS `is_overweight_percent` FROM `isu_condition` WHERE `jia_isu_uuid` = ? AND `timestamp` >= ? AND `timestamp` < ? GROUP BY `timestamp_h`", jiaIsuUUID, graphDate, endTime)
+	if err != nil {
+		return [24]GraphResponse{}, fmt.Errorf("db error: %v", err)
 	}
 
-	filteredDataPoints := []GraphDataPointWithInfo{}
-	if startIndex < endNextIndex {
-		filteredDataPoints = dataPoints[startIndex:endNextIndex]
+	var timestamps []struct {
+		Timestamp time.Time `db:"timestamp"`
+	}
+	err = tx.Select(&timestamps, "SELECT `timestamp` FROM `isu_condition` WHERE `jia_isu_uuid` = ? AND `timestamp` >= ? AND `timestamp` < ? ORDER BY `timestamp` ASC", jiaIsuUUID, graphDate, endTime)
+	if err != nil {
+		return [24]GraphResponse{}, fmt.Errorf("db error: %v", err)
 	}
 
-	responseList := []GraphResponse{}
+	responseList := [24]GraphResponse{}
 	index := 0
-	thisTime := graphDate
-
-	for thisTime.Before(graphDate.Add(time.Hour * 24)) {
+	timestampsIndex := 0
+	for respIndex := 0; respIndex < 24; respIndex++ {
 		var data *GraphDataPoint
-		timestamps := []int64{}
+		conditionTimestamps := []int64{}
 
-		if index < len(filteredDataPoints) {
-			dataWithInfo := filteredDataPoints[index]
+		startedAt := graphDate.Add(time.Hour * time.Duration(respIndex))
+		endedAt := startedAt.Add(time.Hour)
+		if index < len(conditions) {
+			dataWithInfo := conditions[index]
 
-			if dataWithInfo.StartAt.Equal(thisTime) {
-				data = &dataWithInfo.Data
-				timestamps = dataWithInfo.ConditionTimestamps
+			if dataWithInfo.StartAt.Equal(startedAt) {
+				data = &GraphDataPoint{
+					Score: int(dataWithInfo.Score),
+					Percentage: ConditionsPercentage{
+						Sitting:      int(dataWithInfo.IsSitting),
+						IsBroken:     int(dataWithInfo.IsBroken),
+						IsOverweight: int(dataWithInfo.IsOverweight),
+						IsDirty:      int(dataWithInfo.IsDirty),
+					},
+				}
 				index++
 			}
 		}
-
-		resp := GraphResponse{
-			StartAt:             thisTime.Unix(),
-			EndAt:               thisTime.Add(time.Hour).Unix(),
-			Data:                data,
-			ConditionTimestamps: timestamps,
+		if timestampsIndex < len(timestamps) {
+			for ; timestampsIndex < len(timestamps); timestampsIndex++ {
+				timestamp := timestamps[timestampsIndex]
+				if timestamp.Timestamp.After(endedAt) || timestamp.Timestamp.Equal(endedAt) {
+					break
+				}
+				conditionTimestamps = append(conditionTimestamps, timestamp.Timestamp.Unix())
+			}
 		}
-		responseList = append(responseList, resp)
 
-		thisTime = thisTime.Add(time.Hour)
+		responseList[respIndex] = GraphResponse{
+			StartAt:             startedAt.Unix(),
+			EndAt:               endedAt.Unix(),
+			Data:                data,
+			ConditionTimestamps: conditionTimestamps,
+		}
 	}
 
 	return responseList, nil
@@ -1063,8 +1028,39 @@ func initConditionLevel() error {
 
 	for _, c := range conditions {
 		conditionLevel := strings.Count(c.Condition, "=true")
-		_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
-			conditionLevel, c.JIAIsuUUID, c.Timestamp)
+
+		var isBroken, isDirty, isOverweight bool
+		badConditionsCount := 0
+		for _, condStr := range strings.Split(c.Condition, ",") {
+			keyValue := strings.Split(condStr, "=")
+
+			conditionName := keyValue[0]
+			if keyValue[1] == "true" {
+				switch conditionName {
+				case "is_broken":
+					isBroken = true
+					badConditionsCount++
+				case "is_dirty":
+					isDirty = true
+					badConditionsCount++
+				case "is_overweight":
+					isOverweight = true
+					badConditionsCount++
+				}
+			}
+		}
+
+		var rawScore int
+		if badConditionsCount >= 3 {
+			rawScore = scoreConditionLevelCritical
+		} else if badConditionsCount >= 1 {
+			rawScore = scoreConditionLevelWarning
+		} else {
+			rawScore = scoreConditionLevelInfo
+		}
+
+		_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ?, `score` = ?, `is_dirty` = ?, `is_broken` = ?, `is_overweight` = ?, `timestamp_h` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
+			conditionLevel, rawScore, isDirty, isBroken, isOverweight, c.JIAIsuUUID, c.Timestamp)
 		if err != nil {
 			return err
 		}
@@ -1288,7 +1284,7 @@ type isuConditionQueueItem struct {
 
 func isuConditionQueueWorker() {
 	for {
-		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`, `created_at`", "(?, ?, ?, ?, ?, ?, ?)")
+		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `score`, `is_dirty`, `is_overweight`, `is_broken`, `message`, `created_at`", "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		first := true
 	LOOP:
 		for i := 0; i < 1000; i++ {
@@ -1305,8 +1301,37 @@ func isuConditionQueueWorker() {
 			}
 
 			conditionLevel := strings.Count(req.Condition, "=true")
+			var isBroken, isDirty, isOverweight bool
+			badConditionsCount := 0
+			for _, condStr := range strings.Split(req.Condition, ",") {
+				keyValue := strings.Split(condStr, "=")
+
+				conditionName := keyValue[0]
+				if keyValue[1] == "true" {
+					switch conditionName {
+					case "is_broken":
+						isBroken = true
+						badConditionsCount++
+					case "is_dirty":
+						isDirty = true
+						badConditionsCount++
+					case "is_overweight":
+						isOverweight = true
+						badConditionsCount++
+					}
+				}
+			}
+			var rawScore int
+			if badConditionsCount >= 3 {
+				rawScore = scoreConditionLevelCritical
+			} else if badConditionsCount >= 1 {
+				rawScore = scoreConditionLevelWarning
+			} else {
+				rawScore = scoreConditionLevelInfo
+			}
+
 			now := time.Now()
-			bi.Add(req.JIAIsuUUID, time.Unix(req.Timestamp, 0), req.IsSitting, req.Condition, conditionLevel, req.Message, now)
+			bi.Add(req.JIAIsuUUID, time.Unix(req.Timestamp, 0), req.IsSitting, req.Condition, conditionLevel, rawScore, isDirty, isOverweight, isBroken, req.Message, now)
 			latestIsuConditionCache.Store(req.JIAIsuUUID, &IsuCondition{
 				JIAIsuUUID: req.JIAIsuUUID,
 				Timestamp:  time.Unix(req.Timestamp, 0),
