@@ -1176,7 +1176,7 @@ func isuConditionQueueWorker() {
 		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`", "(?, ?, ?, ?, ?)")
 		first := true
 	LOOP:
-		for i := 0; i < 100; i++ {
+		for i := 0; i < 1000; i++ {
 			var req isuConditionQueueItem
 			if first {
 				first = false
