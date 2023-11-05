@@ -309,6 +309,8 @@ func getUserIDFromSession(c echo.Context) (string, int, error) {
 			return "", http.StatusUnauthorized, fmt.Errorf("no session")
 		}
 		jiaUserID = _jiaUserID.(string)
+
+		sessionCache.Store(cookie.Value, jiaUserID)
 	}
 
 	return jiaUserID, 0, nil
