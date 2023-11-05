@@ -32,7 +32,6 @@ import (
 	isuquery "github.com/mazrean/isucon-go-tools/query"
 	isuqueue "github.com/mazrean/isucon-go-tools/queue"
 	"github.com/motoki317/sc"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -1060,24 +1059,13 @@ func initConditionLevel() error {
 		return err
 	}
 
-	eg := errgroup.Group{}
 	for _, c := range conditions {
-		c := c
-		eg.Go(func() error {
-			conditionLevel := strings.Count(c.Condition, "=true")
-			_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
-				conditionLevel, c.JIAIsuUUID, c.Timestamp)
-			if err != nil {
-				return err
-			}
-
-			return nil
-		})
-	}
-
-	err = eg.Wait()
-	if err != nil {
-		return err
+		conditionLevel := strings.Count(c.Condition, "=true")
+		_, err = db.Exec("UPDATE `isu_condition` SET `condition_level` = ? WHERE `jia_isu_uuid` = ? AND `timestamp` = ?",
+			conditionLevel, c.JIAIsuUUID, c.Timestamp)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
