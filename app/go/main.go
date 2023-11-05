@@ -32,7 +32,6 @@ import (
 	isuquery "github.com/mazrean/isucon-go-tools/query"
 	isuqueue "github.com/mazrean/isucon-go-tools/queue"
 	"github.com/motoki317/sc"
-	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -898,64 +897,6 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 	return responseList, nil
 }
 
-// 複数のISUのコンディションからグラフの一つのデータ点を計算
-func calculateGraphDataPoint(isuConditions []IsuCondition) (GraphDataPoint, error) {
-	conditionsCount := map[string]int{"is_broken": 0, "is_dirty": 0, "is_overweight": 0}
-	rawScore := 0
-	for _, condition := range isuConditions {
-		badConditionsCount := 0
-
-		if !isValidConditionFormat(condition.Condition) {
-			return GraphDataPoint{}, fmt.Errorf("invalid condition format")
-		}
-
-		for _, condStr := range strings.Split(condition.Condition, ",") {
-			keyValue := strings.Split(condStr, "=")
-
-			conditionName := keyValue[0]
-			if keyValue[1] == "true" {
-				conditionsCount[conditionName] += 1
-				badConditionsCount++
-			}
-		}
-
-		if badConditionsCount >= 3 {
-			rawScore += scoreConditionLevelCritical
-		} else if badConditionsCount >= 1 {
-			rawScore += scoreConditionLevelWarning
-		} else {
-			rawScore += scoreConditionLevelInfo
-		}
-	}
-
-	sittingCount := 0
-	for _, condition := range isuConditions {
-		if condition.IsSitting {
-			sittingCount++
-		}
-	}
-
-	isuConditionsLength := len(isuConditions)
-
-	score := rawScore * 100 / 3 / isuConditionsLength
-
-	sittingPercentage := sittingCount * 100 / isuConditionsLength
-	isBrokenPercentage := conditionsCount["is_broken"] * 100 / isuConditionsLength
-	isOverweightPercentage := conditionsCount["is_overweight"] * 100 / isuConditionsLength
-	isDirtyPercentage := conditionsCount["is_dirty"] * 100 / isuConditionsLength
-
-	dataPoint := GraphDataPoint{
-		Score: score,
-		Percentage: ConditionsPercentage{
-			Sitting:      sittingPercentage,
-			IsBroken:     isBrokenPercentage,
-			IsOverweight: isOverweightPercentage,
-			IsDirty:      isDirtyPercentage,
-		},
-	}
-	return dataPoint, nil
-}
-
 // GET /api/condition/:jia_isu_uuid
 // ISUのコンディションを取得
 func getIsuConditions(c echo.Context) error {
@@ -1211,69 +1152,69 @@ func initCharacterIsuListCache() error {
 	return nil
 }
 
-var sf = singleflight.Group{}
+var trendCache, err = isucache.New[int, []byte]("trend", func(ctx context.Context, key int) ([]byte, error) {
+	characterIsuMap := map[string][]Isu{}
+	characterIsuListCache.Range(func(k string, v []Isu) bool {
+		characterIsuMap[k] = v
+		return true
+	})
+
+	res := []TrendResponse{}
+
+	for character, isuList := range characterIsuMap {
+		characterInfoIsuConditions := []*TrendCondition{}
+		characterWarningIsuConditions := []*TrendCondition{}
+		characterCriticalIsuConditions := []*TrendCondition{}
+		for _, isu := range isuList {
+			isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
+			if !ok {
+				continue
+			}
+
+			conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
+			if err != nil {
+				c.Logger().Error(err)
+				return nil, fmt.Errorf("db error: %v", err)
+			}
+			trendCondition := TrendCondition{
+				ID:        isu.ID,
+				Timestamp: isuLastCondition.Timestamp.Unix(),
+			}
+			switch conditionLevel {
+			case "info":
+				characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
+			case "warning":
+				characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
+			case "critical":
+				characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
+			}
+		}
+
+		sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
+			return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
+		})
+		sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
+			return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
+		})
+		sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
+			return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
+		})
+		res = append(res,
+			TrendResponse{
+				Character: character,
+				Info:      characterInfoIsuConditions,
+				Warning:   characterWarningIsuConditions,
+				Critical:  characterCriticalIsuConditions,
+			})
+	}
+
+	return json.Marshal(res)
+}, time.Millisecond*10, time.Millisecond*50)
 
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	res, err, _ := sf.Do("getTrend", func() (interface{}, error) {
-		characterIsuMap := map[string][]Isu{}
-		characterIsuListCache.Range(func(k string, v []Isu) bool {
-			characterIsuMap[k] = v
-			return true
-		})
-
-		res := []TrendResponse{}
-
-		for character, isuList := range characterIsuMap {
-			characterInfoIsuConditions := []*TrendCondition{}
-			characterWarningIsuConditions := []*TrendCondition{}
-			characterCriticalIsuConditions := []*TrendCondition{}
-			for _, isu := range isuList {
-				isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
-				if !ok {
-					continue
-				}
-
-				conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
-				if err != nil {
-					c.Logger().Error(err)
-					return nil, fmt.Errorf("db error: %v", err)
-				}
-				trendCondition := TrendCondition{
-					ID:        isu.ID,
-					Timestamp: isuLastCondition.Timestamp.Unix(),
-				}
-				switch conditionLevel {
-				case "info":
-					characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
-				case "warning":
-					characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
-				case "critical":
-					characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
-				}
-			}
-
-			sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
-				return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
-			})
-			sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
-				return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
-			})
-			sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
-				return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
-			})
-			res = append(res,
-				TrendResponse{
-					Character: character,
-					Info:      characterInfoIsuConditions,
-					Warning:   characterWarningIsuConditions,
-					Critical:  characterCriticalIsuConditions,
-				})
-		}
-
-		return json.Marshal(res)
-	})
+	res, err := trendCache.Get(c.Request().Context(), 0)
 	if err != nil {
 		c.Logger().Error(err)
 		return c.NoContent(http.StatusInternalServerError)
