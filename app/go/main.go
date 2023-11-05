@@ -1216,7 +1216,7 @@ var sf = singleflight.Group{}
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	c.Response().Header().Set("Cache-Control", "max-age=0, public")
+	c.Response().Header().Set("Cache-Control", "max-age=1, public")
 
 	res, err, _ := sf.Do("getTrend", func() (interface{}, error) {
 		characterList := []Isu{}
