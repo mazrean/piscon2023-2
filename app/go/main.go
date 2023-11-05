@@ -1290,7 +1290,7 @@ type isuConditionQueueItem struct {
 }
 
 func isuConditionQueueWorker() {
-	sp := semaphore.NewWeighted(100)
+	sp := semaphore.NewWeighted(950)
 	for {
 		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `score`, `is_dirty`, `is_overweight`, `is_broken`, `message`, `created_at`, `timestamp_h`", "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 
