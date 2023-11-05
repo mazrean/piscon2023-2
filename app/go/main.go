@@ -258,6 +258,12 @@ func main() {
 		return
 	}
 
+	err = initCharacterIsuListCache()
+	if err != nil {
+		e.Logger.Fatalf("failed to initCharacterIsuListCache: %v", err)
+		return
+	}
+
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
 	if postIsuConditionTargetBaseURL == "" {
 		e.Logger.Fatalf("missing: POST_ISUCONDITION_TARGET_BASE_URL")
@@ -348,6 +354,12 @@ func postInitialize(c echo.Context) error {
 	err = initLatestIsuConditionCache()
 	if err != nil {
 		c.Logger().Errorf("failed to initLatestIsuConditionCache: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
+	err = initCharacterIsuListCache()
+	if err != nil {
+		c.Logger().Errorf("failed to initCharacterIsuListCache: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
@@ -665,6 +677,10 @@ func postIsu(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+
+	characterIsuListCache.Update(isu.Character, func(v []Isu) ([]Isu, bool) {
+		return append(v, isu), true
+	})
 
 	err = tx.Commit()
 	if err != nil {
@@ -1122,6 +1138,24 @@ func initLatestIsuConditionCache() error {
 	return nil
 }
 
+var characterIsuListCache = isucache.NewMap[string, []Isu]("character_isu_list")
+
+func initCharacterIsuListCache() error {
+	var isuList []Isu
+	err := db.Select(&isuList, "SELECT * FROM `isu`")
+	if err != nil {
+		return err
+	}
+
+	for _, isu := range isuList {
+		characterIsuListCache.Update(isu.Character, func(old []Isu) ([]Isu, bool) {
+			return append(old, isu), true
+		})
+	}
+
+	return nil
+}
+
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
@@ -1135,12 +1169,8 @@ func getTrend(c echo.Context) error {
 	res := []TrendResponse{}
 
 	for _, character := range characterList {
-		isuList := []Isu{}
-		err = db.Select(&isuList,
-			"SELECT * FROM `isu` WHERE `character` = ?",
-			character.Character,
-		)
-		if err != nil {
+		isuList, ok := characterIsuListCache.Load(character.Character)
+		if !ok {
 			c.Logger().Errorf("db error: %v", err)
 			return c.NoContent(http.StatusInternalServerError)
 		}
