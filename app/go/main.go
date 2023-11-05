@@ -1055,7 +1055,7 @@ func initConditionLevel() error {
 		Timestamp  uint64 `db:"timestamp"`
 		Condition  string `db:"condition"`
 	}
-	err := db.Select(&conditions, "SELECT jia_isu_uuid, timestamp, condition FROM `isu_condition` WHERE `condition_level` IS 0")
+	err := db.Select(&conditions, "SELECT jia_isu_uuid, timestamp, condition FROM `isu_condition` WHERE `condition_level` = 0")
 	if err != nil {
 		return err
 	}
