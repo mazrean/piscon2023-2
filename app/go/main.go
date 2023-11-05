@@ -1086,10 +1086,6 @@ func initConditionLevel() error {
 // ISUのコンディションをDBから取得
 func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, conditionLevel map[string]interface{}, startTime time.Time,
 	limit int, isuName string) ([]*GetIsuConditionResponse, error) {
-
-	conditions := []IsuCondition{}
-	var err error
-
 	var conditionLevels []uint8
 	for level := range conditionLevel {
 		switch level {
@@ -1105,6 +1101,7 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 	var (
 		query string
 		args  []interface{}
+		err   error
 	)
 	if startTime.IsZero() {
 		query, args, err = sqlx.In(
@@ -1128,6 +1125,7 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 		return nil, fmt.Errorf("db error: %v", err)
 	}
 
+	conditions := []IsuCondition{}
 	err = db.Select(&conditions, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
@@ -1303,7 +1301,7 @@ type isuConditionQueueItem struct {
 
 func isuConditionQueueWorker() {
 	for {
-		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level, `message`, `created_at`", "(?, ?, ?, ?, ?, ?, ?)")
+		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`, `created_at`", "(?, ?, ?, ?, ?, ?, ?)")
 		first := true
 	LOOP:
 		for i := 0; i < 1000; i++ {
