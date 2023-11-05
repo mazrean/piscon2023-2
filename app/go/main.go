@@ -253,7 +253,6 @@ func main() {
 	defer db.Close()
 
 	go isuConditionQueueWorker()
-	go trendWorker()
 	err = initLatestIsuConditionCache()
 	if err != nil {
 		e.Logger.Fatalf("failed to initLatestIsuConditionCache: %v", err)
@@ -1210,87 +1209,6 @@ func initCharacterIsuListCache() error {
 	}
 
 	return nil
-}
-
-func trendWorker() {
-	ticker := time.NewTicker(time.Millisecond * 5)
-	err := os.MkdirAll(frontendContentsPath+"/api", 0755)
-	if err != nil {
-		log.Errorf("failed to create directory: %v", err)
-		return
-	}
-
-	for range ticker.C {
-		func() {
-			characterIsuMap := map[string][]Isu{}
-			characterIsuListCache.Range(func(k string, v []Isu) bool {
-				characterIsuMap[k] = v
-				return true
-			})
-
-			res := []TrendResponse{}
-
-			for character, isuList := range characterIsuMap {
-				characterInfoIsuConditions := []*TrendCondition{}
-				characterWarningIsuConditions := []*TrendCondition{}
-				characterCriticalIsuConditions := []*TrendCondition{}
-				for _, isu := range isuList {
-					isuLastCondition, ok := latestIsuConditionCache.Load(isu.JIAIsuUUID)
-					if !ok {
-						continue
-					}
-
-					conditionLevel, err := calculateConditionLevel(isuLastCondition.Condition)
-					if err != nil {
-						log.Errorf("db error: %v", err)
-						return
-					}
-					trendCondition := TrendCondition{
-						ID:        isu.ID,
-						Timestamp: isuLastCondition.Timestamp.Unix(),
-					}
-					switch conditionLevel {
-					case "info":
-						characterInfoIsuConditions = append(characterInfoIsuConditions, &trendCondition)
-					case "warning":
-						characterWarningIsuConditions = append(characterWarningIsuConditions, &trendCondition)
-					case "critical":
-						characterCriticalIsuConditions = append(characterCriticalIsuConditions, &trendCondition)
-					}
-				}
-
-				sort.Slice(characterInfoIsuConditions, func(i, j int) bool {
-					return characterInfoIsuConditions[i].Timestamp > characterInfoIsuConditions[j].Timestamp
-				})
-				sort.Slice(characterWarningIsuConditions, func(i, j int) bool {
-					return characterWarningIsuConditions[i].Timestamp > characterWarningIsuConditions[j].Timestamp
-				})
-				sort.Slice(characterCriticalIsuConditions, func(i, j int) bool {
-					return characterCriticalIsuConditions[i].Timestamp > characterCriticalIsuConditions[j].Timestamp
-				})
-				res = append(res,
-					TrendResponse{
-						Character: character,
-						Info:      characterInfoIsuConditions,
-						Warning:   characterWarningIsuConditions,
-						Critical:  characterCriticalIsuConditions,
-					})
-			}
-
-			f, err := os.Create(frontendContentsPath + "/api/trend.json")
-			if err != nil {
-				log.Errorf("failed to open file: %v", err)
-				return
-			}
-			defer f.Close()
-
-			err = json.NewEncoder(f).Encode(res)
-			if err != nil {
-				log.Errorf("failed to write file: %v", err)
-				return
-			}
-		}()
-	}
 }
 
 var sf = singleflight.Group{}
