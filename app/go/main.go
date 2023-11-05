@@ -1287,22 +1287,8 @@ func isuConditionQueueWorker() {
 			now := time.Now()
 			timestamp := time.Unix(req.Timestamp, 0)
 			bi.Add(req.JIAIsuUUID, timestamp, req.IsSitting, req.Condition, conditionLevel, rawScore, isDirty, isOverweight, isBroken, req.Message, now, timestamp.Truncate(time.Hour))
-			var ok bool
-			latestIsuConditionCache.Update(req.JIAIsuUUID, func(v *IsuCondition) (*IsuCondition, bool) {
-				ok = true
-				if v == nil || v.Timestamp.Before(timestamp) {
-					return &IsuCondition{
-						JIAIsuUUID: req.JIAIsuUUID,
-						Timestamp:  timestamp,
-						IsSitting:  req.IsSitting,
-						Condition:  req.Condition,
-						Message:    req.Message,
-						CreatedAt:  now,
-					}, true
-				}
-				return nil, false
-			})
-			if !ok {
+			cond, ok := latestIsuConditionCache.Load(req.JIAIsuUUID)
+			if !ok || cond.Timestamp.Before(timestamp) {
 				latestIsuConditionCache.Store(req.JIAIsuUUID, &IsuCondition{
 					JIAIsuUUID: req.JIAIsuUUID,
 					Timestamp:  time.Unix(req.Timestamp, 0),
