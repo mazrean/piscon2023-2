@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"database/sql"
 	"encoding/json"
@@ -30,6 +31,7 @@ import (
 	isuhttp "github.com/mazrean/isucon-go-tools/http"
 	isuquery "github.com/mazrean/isucon-go-tools/query"
 	isuqueue "github.com/mazrean/isucon-go-tools/queue"
+	"github.com/motoki317/sc"
 )
 
 const (
@@ -1274,6 +1276,23 @@ func isuConditionQueueWorker() {
 	}
 }
 
+var isuCache *sc.Cache[string, Isu]
+
+func init() {
+	var err error
+	isuCache, err = isucache.New[string, Isu]("isu", func(ctx context.Context, key string) (Isu, error) {
+		var isu Isu
+		err := db.GetContext(ctx, &isu, "SELECT * FROM `isu` WHERE `jia_isu_uuid` = ?", key)
+		if err != nil {
+			return Isu{}, err
+		}
+		return isu, nil
+	}, time.Hour, time.Hour)
+	if err != nil {
+		panic(err)
+	}
+}
+
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
@@ -1297,14 +1316,13 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "bad request body")
 	}
 
-	var count int
-	err = db.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
+	_, err = isuCache.Get(c.Request().Context(), jiaIsuUUID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c.String(http.StatusNotFound, "not found: isu")
+	}
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
-	}
-	if count == 0 {
-		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
 	for _, cond := range req {
