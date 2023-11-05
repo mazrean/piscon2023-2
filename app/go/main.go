@@ -32,6 +32,7 @@ import (
 	isuquery "github.com/mazrean/isucon-go-tools/query"
 	isuqueue "github.com/mazrean/isucon-go-tools/queue"
 	"github.com/motoki317/sc"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -1289,6 +1290,7 @@ type isuConditionQueueItem struct {
 }
 
 func isuConditionQueueWorker() {
+	sp := semaphore.NewWeighted(100)
 	for {
 		bi := isuquery.NewBulkInsert("isu_condition", "`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `score`, `is_dirty`, `is_overweight`, `is_broken`, `message`, `created_at`, `timestamp_h`", "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 
@@ -1356,7 +1358,10 @@ func isuConditionQueueWorker() {
 			})
 		}
 
+		sp.Acquire(context.Background(), 1)
 		go func() {
+			defer sp.Release(1)
+
 			query, args := bi.Query()
 			_, err := db.Exec(query, args...)
 			if err != nil {
@@ -1387,7 +1392,7 @@ func init() {
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
 	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
-	dropProbability := 0.5
+	dropProbability := 0.9
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
