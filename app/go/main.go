@@ -1214,7 +1214,7 @@ func initCharacterIsuListCache() error {
 
 func trendWorker() {
 	ticker := time.NewTicker(time.Millisecond * 100)
-	for _ = range ticker.C {
+	for range ticker.C {
 		func() {
 			characterIsuMap := map[string][]Isu{}
 			characterIsuListCache.Range(func(k string, v []Isu) bool {
@@ -1271,7 +1271,7 @@ func trendWorker() {
 					})
 			}
 
-			f, err := os.Create(frontendContentsPath + "trend")
+			f, err := os.Create(frontendContentsPath + "/api/trend")
 			if err != nil {
 				log.Errorf("failed to open file: %v", err)
 				return
