@@ -1169,7 +1169,7 @@ var isuConditionQueue = isuqueue.NewChannel[isuConditionQueueItem]("isu_conditio
 
 type isuConditionQueueItem struct {
 	JIAIsuUUID string `json:"jia_isu_uuid"`
-	*PostIsuConditionRequest
+	PostIsuConditionRequest
 }
 
 func isuConditionQueueWorker() {
@@ -1240,10 +1240,9 @@ func postIsuCondition(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
 
-		cond := cond
 		isuConditionQueue.Push() <- isuConditionQueueItem{
 			JIAIsuUUID:              jiaIsuUUID,
-			PostIsuConditionRequest: &cond,
+			PostIsuConditionRequest: cond,
 		}
 	}
 
