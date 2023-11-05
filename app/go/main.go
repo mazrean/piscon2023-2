@@ -1055,7 +1055,7 @@ func initConditionLevel() error {
 		Timestamp  time.Time `db:"timestamp"`
 		Condition  string    `db:"condition"`
 	}
-	err := db.Select(&conditions, "SELECT `jia_isu_uuid`, `timestamp`, `condition` FROM `isu_condition` WHERE `condition_level` = 0")
+	err := db.Select(&conditions, "SELECT `jia_isu_uuid`, `timestamp`, `condition` FROM `isu_condition`")
 	if err != nil {
 		return err
 	}
@@ -1295,7 +1295,7 @@ func getTrend(c echo.Context) error {
 var isuConditionQueue = isuqueue.NewChannel[isuConditionQueueItem]("isu_condition_queue", 100000)
 
 type isuConditionQueueItem struct {
-	JIAIsuUUID string `json:"jia_isu_uuid"`
+	JIAIsuUUID string
 	PostIsuConditionRequest
 }
 
